@@ -1,0 +1,7 @@
+runs
+venv
+__pycache__
+*.pickle
+*.pth
+*.zip
+*.xls
