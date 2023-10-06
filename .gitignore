@@ -1,5 +1,6 @@
 runs
 venv
+preprocessed_data
 __pycache__
 *.pickle
 *.pth

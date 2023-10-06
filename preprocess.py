@@ -9,11 +9,19 @@ import spacy
 from collections import Counter
 import os
 import pickle
+import json
 
 from pandarallel import pandarallel
 pandarallel.initialize()
 
+# 現状はtokenizerなどは固定である。
 def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_vocab_max_size,dataset_name):
+    if not os.path.exists("preprocessed_data"):
+        os.mkdir("preprocessed_data")
+    prefix_path=f"preprocessed_data/{dataset_name}"
+    if not os.path.exists(prefix_path):
+        os.mkdir(prefix_path)
+    info_dict={}
     j_word_count = src_max_len
     e_word_count = tgt_max_len
     #日本語用のトークン変換関数を作成
@@ -28,8 +36,24 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
     def e_tokenizer(text):
         return [tok.text for tok in e_t.tokenizer(text)]
 
-    print("data load start")
+    print(f"data load start. name: `{dataset_name}`")
     if dataset_name=="kftt":
+        pref="/mnt/hdd/dataset/kftt-data-1.0/data/orig"
+        with open(os.path.join(pref,"kyoto-train.ja"),"r") as f:
+            ja_lines=f.readlines()
+        ja_lines=list(map(lambda x:x.strip(),ja_lines))
+        with open(os.path.join(pref,"kyoto-train.en"),"r") as f:
+            en_lines=f.readlines()
+        en_lines=list(map(lambda x:x.strip(),en_lines))
+    if dataset_name=="kftt_16k":
+        pref="/mnt/hdd/dataset/kftt-data-1.0/data/orig"
+        with open(os.path.join(pref,"kyoto-train.ja"),"r") as f:
+            ja_lines=f.readlines()
+        ja_lines=list(map(lambda x:x.strip(),ja_lines))
+        with open(os.path.join(pref,"kyoto-train.en"),"r") as f:
+            en_lines=f.readlines()
+        en_lines=list(map(lambda x:x.strip(),en_lines))
+    if dataset_name=="kftt_32k":
         pref="/mnt/hdd/dataset/kftt-data-1.0/data/orig"
         with open(os.path.join(pref,"kyoto-train.ja"),"r") as f:
             ja_lines=f.readlines()
@@ -41,6 +65,20 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         df = pd.read_excel("./JEC_basic_sentence_v1-3.xls", header = None)
         ja_lines=df.iloc[:,1].to_list()
         en_lines=df.iloc[:,2].to_list()
+    elif dataset_name=="jesc":
+        df=pd.read_table("/mnt/hdd/dataset/jesc/split/train",header=None,names=["en","ja"])
+        ja_lines=df["ja"].to_list()
+        en_lines=df["en"].to_list()
+    else:
+        raise Exception(f"dataset `{dataset_name}` not exists")
+
+#  TODO 何かがおかしいのとみにくい
+    plt.hist(list(map(len,ja_lines)))
+    plt.xscale("log");plt.yscale("log")
+    plt.savefig(f"{prefix_path}/src_token_dist.png")
+    plt.hist(list(map(len,en_lines)))
+    plt.xscale("log");plt.yscale("log")
+    plt.savefig(f"{prefix_path}/tgt_token_dist.png")
     print("data loaded")
     data=list(zip(ja_lines,en_lines))
     df=pd.DataFrame(data,columns=["src_token","tgt_token"])
@@ -48,8 +86,8 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
 
     #各文章をトークンに変換　重い。
     print("tokenize")
-    src_pikle=f"{dataset_name}_src.pickle"
-    tgt_pikle=f"{dataset_name}_tgt.pickle"
+    src_pikle=f"{prefix_path}/src_tokens.pickle"
+    tgt_pikle=f"{prefix_path}/tgt_tokens.pickle"
     if os.path.isfile(src_pikle):
         with open(src_pikle, 'rb') as f:
             texts = pickle.load(f)
@@ -75,6 +113,11 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         j_list.extend(texts[i])
     j_counter=Counter()
     j_counter.update(j_list)
+    info_dict.update(
+        src_sentence_num=len(ja_lines),
+        original_src_token_total_num=len(j_list),
+        original_src_token_kind_num=len(j_counter)
+    )
     specials=['<unk>', '<pad>', '<bos>', '<eos>']
     j_counter=Counter(dict(j_counter.most_common(source_vocab_max_size-len(specials))))
     j_v = vocab(j_counter, specials=(specials))   #特殊文字の定義
@@ -88,12 +131,25 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         e_list.extend(targets[i])
     e_counter=Counter()
     e_counter.update(e_list)
+    info_dict.update(
+        tgt_sentence_num=len(en_lines),
+        original_tgt_token_total_num=len(e_list),
+        original_tgt_token_kind_num=len(e_counter)
+    )
+    
+    print("original tgt token 種類 : ",len(e_counter))
     specials=['<unk>', '<pad>', '<bos>', '<eos>']
     e_counter=Counter(dict(e_counter.most_common(target_vocab_max_size-len(specials))))
     e_v = vocab(e_counter,specials=(specials))   #特殊文字の定義
     e_v.set_default_index(e_v['<unk>'])
     print("en_vocab created")
     print("en_v",len(e_v))
+    info_dict.update(
+        create_src_token_kind_num=len(j_v), # spec 含む
+        cover_src_token_num=sum(j_counter.total()),
+        create_tgt_token_kind_num=len(e_v),# spec 含む
+        cover_tgt_token_num=sum(e_counter.total())
+    )
 
 
     j_text_transform = T.Sequential(
@@ -145,4 +201,17 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
             return len(self.texts)
     dataset = Dataset(texts,targets, j_text_transform, e_text_transform)
     print("preprocess ended")
+    print(info_dict)
+    with open(f"{prefix_path}/info.json","w") as f:
+        json.dump(info_dict,f)
+
     return dataset , j_v, e_v , j_tokenizer,e_tokenizer
+
+if __name__=="__main__":
+    src_max_len=128
+    tgt_max_len=128
+    source_vocab_max_size=8192
+    target_vocab_max_size=8192
+    dataset_name="jesc"
+
+    get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_vocab_max_size,dataset_name)
