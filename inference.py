@@ -2,7 +2,7 @@ import torch
 import os
 
 from preprocess import get_dataset_and_vocab
-from token2token_transformer import Token2TokenTransformer
+from model.token2token_transformer import Token2TokenTransformer
 
 dataset_name="kftt_16k"
 dataset,_,_,j_v,e_v,j_t,e_t=get_dataset_and_vocab(128,128,32768,32768,dataset_name)

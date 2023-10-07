@@ -5,37 +5,12 @@ from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from timm.scheduler import CosineLRScheduler
-from torchmetrics.functional.text import bleu_score
 import os
 from torchtext.vocab import Vocab
 
-from token2token_transformer import Token2TokenTransformer
+from model.token2token_transformer import Token2TokenTransformer
 from preprocess import get_dataset_and_vocab
 import tqdm
-
-# TODO
-# deviceの変更
-# evaluationの時のmodelのモード変更
-
-def eval_print(writer:SummaryWriter,step:int,model:Token2TokenTransformer,
-               src_token:Tensor,tgt_token:Tensor,outputs:Tensor,
-               ja_v:Vocab,en_v:Vocab
-               ):
-    src_text=" ".join(filter(lambda x: x!="<pad>" ,ja_v.lookup_tokens(src_token[-1,:].tolist())))
-    writer.add_text("src",src_text,step)
-    print("src :",src_text)
-
-    pred_text=" ".join(filter(lambda x: x!="<pad>" ,en_v.lookup_tokens(outputs[-1,:].argmax(-1).tolist()))) 
-    writer.add_text("pred",pred_text,step)
-    print("pred :",pred_text)
-
-    gen_text=" ".join(filter(lambda x: x!="<pad>" ,en_v.lookup_tokens(model.generate(src_token[-1,:],en_v['<bos>'],en_v['<eos>'])[0].tolist()))) 
-    writer.add_text("generate",gen_text,step)
-    print("gen :",gen_text)
-
-    gold_text=" ".join(filter(lambda x: x!="<pad>" ,en_v.lookup_tokens(tgt_token[-1,1:].tolist()))) 
-    writer.add_text("gold",gold_text,step)
-    print("gold :" , gold_text)
 
 def train(
         dataset_name="JEC",sufix_exp_folder="exp2_epoch500",
@@ -99,23 +74,13 @@ def train(
     train_loss = 0
 
     print("train start")
+    model.set_train_setting(device,criterion,ja_v,en_v,writer)
     for epoch in range(epoch_num):
         model.train()
         for i, data in enumerate(train_dataloader):
             step+=1
             optimizer.zero_grad()
-            src_token, tgt_token = data["src_token"].to(device), data["tgt_token"].to(device)
-            # それぞれ (B,L)
-
-            outputs= model(src_token=src_token, tgt_token=tgt_token[:,:-1],tgt_is_causal=True,)
-
-            target = nn.functional.one_hot(tgt_token[:,1:], target_vocab_max_size).to(torch.float32)
-            # sotより後ろを予測するので。
-            # loss = criterion(outputs, target)
-            loss = criterion(
-                    torch.reshape(outputs,(-1,target_vocab_max_size)),
-                    torch.reshape(target,(-1,target_vocab_max_size))
-                )
+            loss=model.train_step(step,**data)
             loss.backward()
             optimizer.step()
             scheduler.step(step)
@@ -124,70 +89,22 @@ def train(
             writer.add_scalar("Loss/train",loss.item(),step)
             writer.add_scalar("lr",scheduler._get_lr(step)[0],step)# 要素ひとつしかない。
 
+            if i % 10 ==  0:
+                print(f"epoch:{epoch+1}  index:{i+1}  loss:{train_loss/10:.10f}")
+                train_loss = 0
+
             model.eval()
             with torch.no_grad():
                 if valid_dataset!=None and i % 100 ==  0:
-                    sents_gen=[] # space区切りのデコード結果
-                    tgt_gold=[]
+                    model.valid_start(epoch,step)
                     for i, data in tqdm.tqdm(enumerate(valid_dataloader)): 
-                        src_token, tgt_token = data["src_token"].to(device), data["tgt_token"].to(device)
-                        # それぞれ (B,L)
-
+                        loss=model.valid_step(get_val_loss,**data)
                         if get_val_loss:
-                            outputs= model(src_token=src_token, tgt_token=tgt_token[:,:-1],tgt_is_causal=True,)
-
-                            target = nn.functional.one_hot(tgt_token[:,1:], target_vocab_max_size).to(torch.float32)
-                            loss = criterion(
-                                    torch.reshape(outputs,(-1,target_vocab_max_size)),
-                                    torch.reshape(target,(-1,target_vocab_max_size))
-                                )
                             writer.add_scalar("Loss/valid",loss.item(),step)
-                        
-                        gen=model.generate(src_token,en_v['<bos>'],en_v['<eos>']).tolist()
-                        sent_wakati=[filter(lambda x: (x!="<pad>" and x!="<bos>" and x!="<eos>"), en_v.lookup_tokens(sent)) for sent in gen]
-                        sents=[" ".join(sent) for sent in sent_wakati]
-                        sents_gen.extend(sents)
-
-                        gold_ge=tgt_token.tolist()
-                        # print(gold_ge)
-                        gold_wakati=[filter(lambda x: (x!="<pad>" and x!="<bos>" and x!="<eos>"), en_v.lookup_tokens(sent)) for sent in gold_ge]
-                        sents=[[" ".join(sent)] for sent in gold_wakati]
-                        tgt_gold.extend(sents)
-
-                        # goldでは元の文を使うべきかunkこみにすべきか
-                        # 言語処理の観点からは元の文を使うべきだが、同じ条件下でモデル性能を比較したいなら、unkコミでも大丈夫なはず。ただし、<bos><eos><pad>はそれなりに数が多くて何も考えていなくても成果になってしまう可能性があるので、抜いておく。
-                    # TODO paddingなど考えるのがめんどいので、全てのトークンで考える。
-                    score=bleu_score(sents_gen,tgt_gold)
-                    print(score,sents_gen[0],tgt_gold[0])
-                    writer.add_scalar("BLEU/valid",score,step)
-
-
-
-
-
-                if i % 10 ==  0:
-                    print(f"epoch:{epoch+1}  index:{i+1}  loss:{train_loss/10:.10f}")
-                    train_loss = 0
-                    
-
-                if step%100 == 0:
-                    print(f"out_log[step:{step}]")
-                    eval_print(writer,step,model,
-                               src_token,tgt_token,outputs,ja_v,en_v)
-
+                    model.valid_end()
 
     writer.close()
     torch.save(model.state_dict(),os.path.join(exp_dir,"ja2en_middle.pth"))
-
-    jas=["今日はいい天気ですね。","友達とご飯を食べにいく。"]
-    jas_wakatis=[j_tok(el) for el in jas]
-    jas_ids=train_dataset.src_data.transform(jas_wakatis)
-    
-    sents_tokens=model.generate(jas_ids,en_v['<bos>'],en_v['<eos>']).tolist()
-    sent_wakati=[filter(lambda x: x!="<pad>", en_v.lookup_tokens(sent)) for sent in sents_tokens]
-    sents=[" ".join(sent) for sent in sent_wakati]
-    print("\n".join(sents))
-    print("end")
 
 if __name__=="__main__":
     # train()
