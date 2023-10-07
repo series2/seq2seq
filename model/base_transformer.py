@@ -1,9 +1,10 @@
 import torch.nn as nn
 import torch
 from torch import Tensor
-from positional_embedding_old import PositionalEncoding
 import math
 from typing import Optional
+
+from positional_embedding import PositionalEncoding
 
 class TransformerEncoderDecoder(nn.Module):
     def __init__(self,
