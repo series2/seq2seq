@@ -50,6 +50,8 @@ class Token2TokenTransformer(nn.Module):
         src_tokenのshapeは (L) # (N,L)の場合、最大長に達するもしくは全てが同時にeotになるまで生成し続ける
         結果について、start_tokenも含む。
         """
+        if len(src_token.shape)==1:
+            src_token=src_token.reshape((1,-1))
         result=self.transformer.generate(src_token,tgt_start_token,tgt_end_token,num_beams)
         return result
     

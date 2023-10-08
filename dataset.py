@@ -3,9 +3,32 @@ import torchtext.transforms as T
 from torchtext.vocab import Vocab
 from collections.abc import Callable
 from torch import Tensor
+import torchaudio
 class MyDataset(Dataset):
     def __call__(self,**args):
+        raise PendingDeprecationWarning("将来的に廃止見込み")
         raise NotImplementedError()
+    
+
+class ASRDataset(MyDataset):
+    def __init__(self,
+                 src_audio_files:list[str],tgts:list[str],
+                 tgt_vocab:Vocab,
+                 tgt_tokenizer:Callable[[str],list[str]],
+                 tgt_max_len:int,
+                 ):
+        assert len(src_audio_files)==len(tgts)
+        print("注意:waweファイルはモデルの構造上現在1chのみしか使えません。")
+        self.src_audio_files=src_audio_files # ファイルをメモリに乗っけるのはコストがかかりそうなので毎回読み取ることにする。
+        self.tgt_data=NormalText(tgts,tgt_vocab,tgt_tokenizer,tgt_max_len)
+    def __getitem__(self, i) -> dict[str,str]:
+        waveform, sample_rate = torchaudio.load(self.src_audio_files[i]) # waveform shape : (C,L)
+        data = {"src_audio": waveform, "tgt_token": self.tgt_data[i]["ids"],
+                # "tgt_wakati":self.tgt_data[i]["tokens"]
+                }
+        return data
+    def __len__(self):
+        return len(self.src_audio_files)
     
 class NormalMT(MyDataset):
     def __init__(self,
@@ -58,4 +81,5 @@ class NormalText(MyDataset):
         return self.transform([tokens]).squeeze()
      
 
-
+def test():
+    audio_dataset=ASRDataset(src_audio_files=[""],)

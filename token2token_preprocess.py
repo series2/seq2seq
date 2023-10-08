@@ -37,15 +37,15 @@ pandarallel.initialize()
 
 # valid,testに関して、統計データを出したいが、後回し
 
-def show_len_dist(src_texts:list[str],tgt_texts:list[str],prefix_path:str):
+def show_len_dist(src_token_len_dist:list[int],tgt_token_len_dist:list[int],prefix_path:str):
     #  TODO 何かがおかしいのとみにくい
     # 文書ごとのトークン長の分布
     # 単語種ごとの数の分布もみたい
-    plt.hist(list(map(len,src_texts)))
-    plt.xscale("log");plt.yscale("log")
+    plt.hist(src_token_len_dist)
+    # plt.xscale("log");plt.yscale("log")
     plt.savefig(f"{prefix_path}/src_token_dist.png")
-    plt.hist(list(map(len,tgt_texts)))
-    plt.xscale("log");plt.yscale("log")
+    plt.hist(tgt_token_len_dist)
+    # plt.xscale("log");plt.yscale("log")
     plt.savefig(f"{prefix_path}/tgt_token_dist.png")
 
 # 現状はtokenizerなどは固定である。
@@ -113,7 +113,6 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         en_test_texts=df["en"].to_list()
     else:
         raise Exception(f"dataset `{dataset_name}` not exists")
-    show_len_dist(ja_train_texts,en_train_texts,prefix_path)
     print("data loaded")
     data=list(zip(ja_train_texts,en_train_texts))
     df=pd.DataFrame(data,columns=["src_token","tgt_token"])
@@ -124,7 +123,7 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         with open(src_vocab_pikle, 'rb') as f:
             j_v,src_info= pickle.load(f)
     else:
-        j_v,src_info=create_vocab(df["src_token"],j_tokenizer,source_vocab_max_size)
+        j_v,src_info,src_token_len_dist=create_vocab(df["src_token"],j_tokenizer,source_vocab_max_size)
         with open(src_vocab_pikle, 'wb') as f:
             pickle.dump((j_v,src_info), f)
     info_dict.update(
@@ -134,13 +133,13 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         with open(tgt_vocab_pikle, 'rb') as f:
             e_v,tgt_info = pickle.load(f)
     else:
-        e_v,tgt_info=create_vocab(df["tgt_token"],e_tokenizer,target_vocab_max_size)
+        e_v,tgt_info,tgt_token_len_dist=create_vocab(df["tgt_token"],e_tokenizer,target_vocab_max_size)
         with open(tgt_vocab_pikle, 'wb') as f:
             pickle.dump((e_v,tgt_info), f)
     info_dict.update(
         {f"tgt_{key}":value for key,value in  tgt_info.items()}
     )
-
+    show_len_dist(src_token_len_dist,tgt_token_len_dist,prefix_path)
     print("tokenize end")
 
     train_dataset = NormalMT(ja_train_texts,en_train_texts,j_v,e_v,j_tokenizer,e_tokenizer,src_max_len,tgt_max_len)
@@ -152,9 +151,11 @@ def get_dataset_and_vocab(src_max_len,tgt_max_len,source_vocab_max_size,target_v
         have_testdata=test_dataset!=None,
         )
     print(info_dict)
-    with open(f"{prefix_path}/info.json","w") as f:
-        print(f"save to {prefix_path}/info.json")
-        json.dump(info_dict,f)
+    info_path=f"{prefix_path}/info.json"
+    if not os.path.exists(info_path):
+        with open(info_path,"w") as f:
+            print(f"save to {info_path}")
+            json.dump(info_dict,f)
 
     return train_dataset ,valid_dataset,test_dataset, j_v, e_v , j_tokenizer,e_tokenizer
 

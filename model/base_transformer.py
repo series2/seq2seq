@@ -4,7 +4,7 @@ from torch import Tensor
 import math
 from typing import Optional
 
-from positional_embedding import PositionalEncoding
+from .positional_embedding import PositionalEncoding
 
 class TransformerEncoderDecoder(nn.Module):
     def __init__(self,
@@ -73,7 +73,7 @@ class TransformerEncoderDecoder(nn.Module):
                  num_beams=1
                  )->Tensor:
         """
-        src_tokenのshapeは (L) # (N,L)の場合、最大長に達するもしくは全てが同時にeotになるまで生成し続ける
+        src_tokenのshape(N,L,*)。最大長に達するもしくは全てが同時にeotになるまで生成し続ける
         結果出力はstart_tokenも含む。
         [TODO] 現在、tgtはtokenのみしか対応していません。
         """
@@ -81,8 +81,8 @@ class TransformerEncoderDecoder(nn.Module):
         with torch.no_grad():
             if num_beams>1:
                 raise NotImplementedError()
-            if len(src_data.shape)==1:
-                src_data=src_data.reshape((1,-1))
+            # if len(src_data.shape)==1:
+            #     src_data=src_data.reshape((1,-1))
             # result=tgt_start_data
             result=torch.ones((len(src_data),1),dtype=torch.int64)*tgt_start_token
             result=result.to(src_data.device)

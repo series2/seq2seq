@@ -18,6 +18,7 @@ def create_vocab(series:Series,tokenizer:Callable[[str],list[str]],
     print("tokenize end")
     print(tokenized_texts[0]) # for debug
     __tmp = [] # 全てのtokenリスト
+    token_len_dist=[len(text) for text in tokenized_texts]
     for i in range(len(tokenized_texts)):
         __tmp.extend(tokenized_texts[i])
     counter=Counter()
@@ -35,4 +36,4 @@ def create_vocab(series:Series,tokenizer:Callable[[str],list[str]],
     info_dict.update(
         cover_token_num=counter.total(),
         create_vocab_size=len(v))
-    return v,info_dict
+    return v,info_dict,token_len_dist

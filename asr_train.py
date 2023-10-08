@@ -5,12 +5,29 @@ from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from timm.scheduler import CosineLRScheduler
+from torch.nn.utils.rnn import pad_sequence
 import os
 from torchtext.vocab import Vocab
 
-from model.token2token_transformer import Token2TokenTransformer
-from token2token_preprocess import get_dataset_and_vocab
+# from model.token2token_transformer import Token2TokenTransformer
+from model.audio2token_transformer import Audio2TokenTransformer
+from asr_preprocess import get_dataset_and_vocab
 import tqdm
+
+def collate_fn(data:list[(Tensor,Tensor)])->(Tensor,Tensor):
+    # 注意　こうするとバッチごとにメモリ使用率が変わるからあんまりやりたくない。本当はmaxの長さを把握しておくと良い。
+    audios=[]
+    audio_chan=len(data[0]["src_audio"])
+    batch_len=len(data)
+    scripts=[]
+    for d in data:
+        for a in d["src_audio"]:
+            audios.append(a)
+        scripts.append(d["tgt_token"])
+    audio=pad_sequence(audios,batch_first=True)
+    audio=audio.reshape(batch_len,audio_chan,-1)
+    script=torch.stack(scripts)
+    return {"src_audio":audio,"tgt_token":script}
 
 def train(
         dataset_name="JEC",sufix_exp_folder="exp2_epoch500",
@@ -19,7 +36,7 @@ def train(
         # データセット、問題設定
         source_max_length=128, # <eos><bos>含まず
         target_max_length=128, # <eos><bos>含まず
-        source_vocab_max_size=8192,# special token 含む
+        # source_vocab_max_size=8192,# special token 含む
         target_vocab_max_size=8192,# special token 含む
         lr=1e-5,lr_min=1e-7,# lr_minはスケジューラによる最終値
         warmup_t=100, warmup_lr_init=1e-7, 
@@ -34,40 +51,42 @@ def train(
         else:
             raise Exception("上書きしないので終了します。")
     print("preprocess start")
-    train_dataset,valid_dataset,test_dataset,ja_v,en_v,j_tok,e_tok = get_dataset_and_vocab(source_max_length,target_max_length,source_vocab_max_size,target_vocab_max_size,dataset_name=dataset_name)
-
+    writer = SummaryWriter(exp_dir)
+    train_dataset,valid_dataset,test_dataset,en_v,e_tok = get_dataset_and_vocab(target_max_length,target_vocab_max_size,dataset_name=dataset_name)
+    target_vocab_max_size=min(target_vocab_max_size,len(en_v))
     # 学習関係
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model=Token2TokenTransformer(
-        src_vocab_size=source_vocab_max_size,
+    model=Audio2TokenTransformer(
+        # src_bin_size=40,
+        # src_max_len=128,
         tgt_vocab_size=target_vocab_max_size,
-        src_max_len=source_max_length+2, # 前後のtoken
+        # src_max_len=source_max_length+2, # 前後のtoken
         tgt_max_len=target_max_length+1, # 前後のtoken
+        use_spec_aug=True,
+        writer=writer
         ).to(device)
     print("model loaded")
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    train_dataloader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True)
-    valid_dataloader=DataLoader(valid_dataset,batch_size=batch_size,shuffle=False) if valid_dataset!=None else None
-    test_dataloader=DataLoader(train_dataset,batch_size=batch_size,shuffle=False) if valid_dataset!=None else None
+    train_dataloader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,collate_fn=collate_fn)
+    valid_dataloader=DataLoader(valid_dataset,batch_size=batch_size,shuffle=False,collate_fn=collate_fn) if valid_dataset!=None else None
+    test_dataloader=DataLoader(train_dataset,batch_size=batch_size,shuffle=False,collate_fn=collate_fn) if valid_dataset!=None else None
     scheduler = CosineLRScheduler(optimizer,
                                 t_initial=epoch_num*len(train_dataloader), lr_min=lr_min,
                                 warmup_t=warmup_t, warmup_lr_init=warmup_lr_init, warmup_prefix=True) 
 
 
-    writer = SummaryWriter(exp_dir)
     writer.add_text("meta_data",str(dict(
                 dataset_name=dataset_name,sufix_exp_folder=sufix_exp_folder,
         epoch_num = epoch_num,
         # データセット、問題設定
         src_max_length=source_max_length, # <eos><bos>含まず
         tgt_max_length=target_max_length, # <eos><bos>含まず
-        src_vocab_max_size=source_vocab_max_size,
+        # src_vocab_max_size=source_vocab_max_size,
         tgt_vocab_max_size=target_vocab_max_size,
         batch_size=batch_size,
         approxmate_totalstep=epoch_num*len(train_dataloader), 
         soruce_sentence_num=len(train_dataset),
-        src_vocab_size=len(ja_v),
         tgt_vocab_size=len(en_v),
         lr=lr,
     )))
@@ -75,7 +94,7 @@ def train(
     train_loss = 0
 
     print("train start")
-    model.set_train_setting(device,criterion,ja_v,en_v,writer)
+    model.set_train_setting(device,criterion,en_v)
     for epoch in range(epoch_num):
         model.train()
         for i, data in enumerate(train_dataloader):
@@ -96,63 +115,26 @@ def train(
 
             model.eval()
             with torch.no_grad():
-                if valid_dataset!=None and i % 100 ==  0:
+                if valid_dataset!=None and i % 10000 ==  0:
                     model.valid_start(epoch,step)
-                    for i, data in tqdm.tqdm(enumerate(valid_dataloader)): 
+                    for i, data in tqdm.tqdm(enumerate(valid_dataloader),total=len(valid_dataloader)): 
                         loss=model.valid_step(get_val_loss,**data)
                         if get_val_loss:
                             writer.add_scalar("Loss/valid",loss.item(),step)
                     model.valid_end()
 
     writer.close()
-    torch.save(model.state_dict(),os.path.join(exp_dir,"ja2en_middle.pth"))
+    torch.save(model.state_dict(),os.path.join(exp_dir,"audio2text_middle.pth"))
 
 if __name__=="__main__":
-    # train()
-    # train(dataset_name="kftt",sufix_exp_folder="exp3_epoch100",epoch_num=100) ex3 は途中終了した。
-
-    # train(dataset_name="kftt_16k",
-    #     source_vocab_max_size=16384,
-    #     target_vocab_max_size=16384,
-    #     sufix_exp_folder="exp4_vocab_16k_epoch10",
-    #     epoch_num=10)
-    
-    # train(dataset_name="kftt_32k",
-    #     source_vocab_max_size=32768,
-    #     target_vocab_max_size=32768,
-    #     sufix_exp_folder="exp4_vocab_32k_epoch10",
-    #     epoch_num=10)
-    # train(dataset_name="kftt_32k",
-    #     source_vocab_max_size=32768,
-    #     target_vocab_max_size=32768,
-    #     sufix_exp_folder="exp5_vocab_16k_epoch10_batch64_lr1e-4",
-        # batch_size=64,  epoch_num=10,lr=1e-4)
-  
-    # train(dataset_name="kftt",
-    #     sufix_exp_folder="debug",
-    #     source_max_length=32,
-    #     target_max_length=32,
-    #     batch_size=128,
-    #     epoch_num=10)
-
-    # train(dataset_name="jesc",
-    #     sufix_exp_folder="exp1",
-    #     source_max_length=32,
-    #     target_max_length=32,
-    #     source_vocab_max_size=32768,
-    #     target_vocab_max_size=32768,
-    #     batch_size=128,
-    #     lr=1e-4,lr_min=1e-6,
-    #     epoch_num=10)
-    train(dataset_name="jesc",
-        sufix_exp_folder="exp2",
-        source_max_length=32,
-        target_max_length=32,
-        source_vocab_max_size=32768,
+    train(dataset_name="librispeech-100",
+        sufix_exp_folder="exp1",
+        target_max_length=64,
+        # source_vocab_max_size=32768,
         target_vocab_max_size=32768,
-        batch_size=256,
-        lr=5e-4,lr_min=1e-6,
-        warmup_lr_init=1e-5,warmup_t=1000,
+        batch_size=4,
+        lr=1e-5,lr_min=1e-7,
+        warmup_lr_init=1e-7,warmup_t=1000,
         epoch_num=10)
 
     
