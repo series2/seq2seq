@@ -20,9 +20,15 @@ preprocessed.pyでは、data_nameに紐づいて事前処理を行い、保存�
 - 音声2テキストの対応
 - 学習済みモデルへの対応
 - beam searchへの対応
+- 音声2音声モデルへの対応
+- テキスト2テキストモデルへの対応
+- 大規模なデータセットにおけるIterable Dataset
+    - https://huggingface.co/docs/datasets/about_mapstyle_vs_iterable
+    - https://huggingface.co/docs/datasets/stream
+    - https://huggingface.co/docs/datasets/v1.10.1/dataset_streaming.html
 
 # 参考
-JESCコーパスのtrainデータをして日英翻訳を行った時のdevセット上でのBLUEスコアは、7程度。
+JESCコーパスのtrainデータをして日英翻訳を行った時のdevセット上でのBLUEスコアは、8程度。
 ```
     train(dataset_name="jesc",
         sufix_exp_folder="exp1",
@@ -37,6 +43,8 @@ JESCコーパスのtrainデータをして日英翻訳を行った時のdevセ�
 動作環境は
 GPU : RTX 4880 (使用メモリはおよそ10G)です。
 学習時間は 18時間(目安)。validationの頻度が多い気がするので、下げれば数時間は早くなると思います。
+
+![Image](https://github.com/series2/seq2seq/blob/main/image.png)
 
 
 # 参考
